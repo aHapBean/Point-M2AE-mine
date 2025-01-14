@@ -376,7 +376,7 @@ class Point_M2AE(nn.Module):
                     x_full = self.token_prop[i - 1](center, centers[i - 1], x_full_en, x_full)
                 pos_full = self.decoder_pos_embeds[i](center)
 
-            # x_full = self.h_decoder[i](x_full, pos_full)
+            x_full = self.h_decoder[i](x_full, pos_full)
             # print(f'i: {i}, x_full: {x_full.shape}')
             # i: 0, x_full: torch.Size([128, 64, 384])                                                                                                                                                               
             # i: 1, x_full: torch.Size([128, 256, 192])
