@@ -287,30 +287,135 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x, mask=None):
-        B, N, C = x.shape
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+    def forward(self, x, mask=None, y=None, z=None, orig_mask=None):
+        if y is None:
+            B, N, C = x.shape
+            qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
 
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        if mask is not None:
-            # mask = mask * float('-inf') 
-            mask = mask * - 100000.0
-            attn = attn + mask.unsqueeze(1)
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            if mask is not None:
+                # mask = mask * float('-inf') 
+                mask = mask * - 100000.0
+                attn = attn + mask.unsqueeze(1)
+            attn = attn.softmax(dim=-1) # the position that is masked and softmax -> 0 !!
+            attn = self.attn_drop(attn)
+
+            # global flag
+            # flag += 1
+            # if flag == 5:
+            #     for k in range(attn.shape[0]):
+            #         torch.save(attn[k][0][0][:], "/data2/renrui/visualize_pc/layer5_mask/data/attn" + str(k) + ".pt")
+            #     exit(1)
+
+            x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+            x = self.proj(x)
+            x = self.proj_drop(x)
+            return x
+
+        # assert mask is None
+        assert z is not None
+        # Self attention + Cross attention
+        B, N, C = x.shape
+        L = y.shape[1]
+        assert y.shape[1] == z.shape[1]
+        # print(f'{x.shape} {y.shape} {z.shape}') # torch.Size([128, 357, 96]) torch.Size([128, 51, 96]) torch.Size([128, 51, 96]) 
+        x = torch.cat([x, y, z], dim=1)     # B, N+2L, C
+        qkv = self.qkv(x).reshape(B, N + 2 * L, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        # q: B, num_heads, N + 2 * L, C//num_heads
+        
+        # Cross attention
+        # y query
+        attn = (q[:, :, N:N+L] @ k[:, :, :N+L].transpose(-2, -1)) * self.scale  # B, num_heads, L, N+L
+        
+        assert orig_mask is not None
+        # mask = mask * float('-inf') 
+        # aux_mask = orig_mask[:, 0, :] * - 100000.0  # B, G
+        # print(aux_mask.shape)   # 128, 357 + L 个 0
+        aux_mask = torch.zeros([B, N + L]).to(attn.device)
+        aux_mask[:, :N] = orig_mask[:, 0, :] * - 100000.0
+        attn = attn + aux_mask.unsqueeze(1).unsqueeze(1).expand(B, 1, L, N + L)    # B, 1, 1, G
+        
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
-        # global flag
-        # flag += 1
-        # if flag == 5:
-        #     for k in range(attn.shape[0]):
-        #         torch.save(attn[k][0][0][:], "/data2/renrui/visualize_pc/layer5_mask/data/attn" + str(k) + ".pt")
-        #     exit(1)
+        y = (attn @ v[:, :, :N+L]).transpose(1, 2).reshape(B, L, C)
+        y = self.proj(y)
+        y = self.proj_drop(y)
+        
+        # Cross attention
+        # z query
+        attn = (q[:, :, N+L:N+2*L] @ torch.cat([k[:, :, :N], k[:, :, N+L:N+2*L]], dim=2).transpose(-2, -1)) * self.scale  # B, num_heads, L, N+L
+        
+        attn = attn + aux_mask.unsqueeze(1).unsqueeze(1).expand(B, 1, L, N + L)    # B, 1, 1, G
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        z = (attn @ torch.cat([v[:, :, :N], v[:, :, N+L:N+2*L]], dim=2)).transpose(1, 2).reshape(B, L, C)
+        z = self.proj(z)
+        z = self.proj_drop(z)        
+        
+        # Self attention
+        attn = (q[:, :, :N] @ k[:, :, :N].transpose(-2, -1)) * self.scale
+        if mask is not None: # 这个问题是self attention，cross attention也需要mask，应该怎么写
+            # mask = mask * float('-inf') 
+            mask = mask * - 100000.0
+            attn = attn + mask.unsqueeze(1)        
+        
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        
+        # NOTE FIXME
+        # if mask is not None: # 这个问题是self attention，cross attention也需要mask，应该怎么写
+        #     # mask = mask * float('-inf') 
+        #     mask = mask * - 100000.0
+        #     attn = attn + mask.unsqueeze(1)
+        # attn = attn.softmax(dim=-1) # the position that is masked and softmax -> 0 !!
+        # attn = self.attn_drop(attn)        
+
+        x = (attn @ v[:, :, :N]).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
-        return x
+
+        return x, y, z # , attn
+
+# class Attention(nn.Module):
+#     def __init__(self, dim, num_heads=8, qkv_bias=False, qk_scale=None, attn_drop=0., proj_drop=0.):
+#         super().__init__()
+#         self.num_heads = num_heads
+#         head_dim = dim // num_heads
+#         # NOTE scale factor was wrong in my original version, can set manually to be compat with prev weights
+#         self.scale = qk_scale or head_dim ** -0.5
+#         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+#         self.attn_drop = nn.Dropout(attn_drop)
+#         self.proj = nn.Linear(dim, dim)
+#         self.proj_drop = nn.Dropout(proj_drop)
+
+#     def forward(self, x, mask=None):
+#         B, N, C = x.shape
+#         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+#         q, k, v = qkv[0], qkv[1], qkv[2]   # make torchscript happy (cannot use tensor as tuple)
+
+#         attn = (q @ k.transpose(-2, -1)) * self.scale
+#         if mask is not None:
+#             # mask = mask * float('-inf') 
+#             mask = mask * - 100000.0
+#             attn = attn + mask.unsqueeze(1)
+#         attn = attn.softmax(dim=-1) # the position that is masked and softmax -> 0 !!
+#         attn = self.attn_drop(attn)
+
+#         # global flag
+#         # flag += 1
+#         # if flag == 5:
+#         #     for k in range(attn.shape[0]):
+#         #         torch.save(attn[k][0][0][:], "/data2/renrui/visualize_pc/layer5_mask/data/attn" + str(k) + ".pt")
+#         #     exit(1)
+
+#         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+#         x = self.proj(x)
+#         x = self.proj_drop(x)
+#         return x
 
 
 class Block(nn.Module):
@@ -328,10 +433,26 @@ class Block(nn.Module):
         self.attn = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
         
-    def forward(self, x, mask=None):
-        x = x + self.drop_path(self.attn(self.norm1(x), mask))
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
+    def forward(self, x, mask=None, y=None, z=None, orig_mask=None):
+        if y is None:
+            x = x + self.drop_path(self.attn(self.norm1(x), mask))
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x
+        # assert mask is None # when pre-training the mask should be None
+        # print(f'x: {x.shape} y: {y.shape} z: {z.shape}')
+        new_x = self.norm1(x)
+        new_y = self.norm1(y)
+        new_z = self.norm1(z)
+        
+        new_x, new_y, new_z = self.attn(new_x, mask=mask, y=new_y, z=new_z, orig_mask=orig_mask)
+        new_x = x + self.drop_path(new_x)
+        new_y = y + self.drop_path(new_y)
+        new_z = z + self.drop_path(new_z)
+        
+        new_x = new_x + self.drop_path(self.mlp(self.norm2(new_x))) # norm attn drop residual
+        new_y = new_y + self.drop_path(self.mlp(self.norm2(new_y))) # norm mlp drop residual
+        new_z = new_z + self.drop_path(self.mlp(self.norm2(new_z)))
+        return new_x, new_y, new_z            
 
 
 class Encoder_Block(nn.Module):
@@ -346,10 +467,15 @@ class Encoder_Block(nn.Module):
                 )
             for i in range(depth)])
 
-    def forward(self, x, pos, vis_mask):
-        for _, block in enumerate(self.blocks):
-            x = block(x + pos, vis_mask)
-        return x
+    def forward(self, x, pos, vis_mask, x_mask=None, pos_mask=None, x_mask_without_point=None, pos_mask_without_point=None, orig_mask=None):
+        if x_mask is None:
+            for _, block in enumerate(self.blocks):
+                x = block(x + pos, vis_mask)
+            return x
+        else:
+            for _, block in enumerate(self.blocks):
+                x, x_mask, x_mask_without_point = block(x + pos, vis_mask, x_mask + pos_mask, x_mask_without_point + pos_mask_without_point, orig_mask)
+            return x, x_mask, x_mask_without_point 
 
 
 class Decoder_Block(nn.Module):

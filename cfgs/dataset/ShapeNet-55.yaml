@@ -1,4 +1,4 @@
 NAME: ShapeNet
-DATA_PATH: /mnt/nas-new/home/zhangxiangdong/SSL3D/ReCon_exp/data/ShapeNet55-34/ShapeNet-55
+DATA_PATH: /mnt/petrelfs/zhangxiangdong/data/PointCloud/data/ShapeNet55-34/ShapeNet-55
 N_POINTS: 8192
-PC_PATH: /mnt/nas-new/home/zhangxiangdong/SSL3D/ReCon_exp/data/ShapeNet55-34/shapenet_pc
+PC_PATH: /mnt/petrelfs/zhangxiangdong/data/PointCloud/data/ShapeNet55-34/shapenet_pc

@@ -107,7 +107,6 @@ def run_net(args, config, train_writer=None, val_writer=None):
         base_model.train()  # set model to training mode
         n_batches = len(train_dataloader)
         for idx, (taxonomy_ids, model_ids, data) in enumerate(train_dataloader):
-            
             num_iter += 1
             n_itr = epoch * n_batches + idx
             
@@ -174,53 +173,54 @@ def run_net(args, config, train_writer=None, val_writer=None):
              optimizer.param_groups[0]['lr']), logger = logger)
 
         ### eval with SVM ###
-        feats_train = []
-        labels_train = []
-        base_model.eval()
+        # feats_train = []
+        # labels_train = []
+        # base_model.eval()
 
-        for i, (data, label) in enumerate(train_dataloader_svm):
-            labels = list(map(lambda x: x[0],label.numpy().tolist()))
-            data = data.cuda().contiguous()
-            with torch.no_grad():
-                feats = base_model(data, eval=True)
-            feats = feats.detach().cpu().numpy()
-            for feat in feats:
-                feats_train.append(feat)
-            labels_train += labels
+        # for i, (data, label) in enumerate(train_dataloader_svm):
+        #     labels = list(map(lambda x: x[0],label.numpy().tolist()))
+        #     data = data.cuda().contiguous()
+        #     with torch.no_grad():
+        #         feats = base_model(data, eval=True)
+        #     feats = feats.detach().cpu().numpy()
+        #     for feat in feats:
+        #         feats_train.append(feat)
+        #     labels_train += labels
 
-        feats_train = np.array(feats_train)
-        labels_train = np.array(labels_train)
+        # feats_train = np.array(feats_train)
+        # labels_train = np.array(labels_train)
 
-        feats_test = []
-        labels_test = []
+        # feats_test = []
+        # labels_test = []
 
-        for i, (data, label) in enumerate(test_dataloader_svm):
-            labels = list(map(lambda x: x[0],label.numpy().tolist()))
-            data = data.cuda().contiguous()
-            with torch.no_grad():
-                feats = base_model(data, eval=True)
-            feats = feats.detach().cpu().numpy()
-            for feat in feats:
-                feats_test.append(feat)
-            labels_test += labels
+        # for i, (data, label) in enumerate(test_dataloader_svm):
+        #     labels = list(map(lambda x: x[0],label.numpy().tolist()))
+        #     data = data.cuda().contiguous()
+        #     with torch.no_grad():
+        #         feats = base_model(data, eval=True)
+        #     feats = feats.detach().cpu().numpy()
+        #     for feat in feats:
+        #         feats_test.append(feat)
+        #     labels_test += labels
 
-        feats_test = np.array(feats_test)
-        labels_test = np.array(labels_test)
+        # feats_test = np.array(feats_test)
+        # labels_test = np.array(labels_test)
         
-        model_tl = SVC(C = 0.01, kernel ='linear')
-        model_tl.fit(feats_train, labels_train)
-        test_accuracy = model_tl.score(feats_test, labels_test)
+        # model_tl = SVC(C = 0.01, kernel ='linear')
+        # model_tl.fit(feats_train, labels_train)
+        # test_accuracy = model_tl.score(feats_test, labels_test)
         
-        print_log(f"Linear Accuracy : {test_accuracy}", logger=logger)
-        if test_accuracy > best_accuracy:
-            best_accuracy = test_accuracy
-            print_log(f"Saving best...", logger=logger)
-            builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger)
+        # print_log(f"Linear Accuracy : {test_accuracy}", logger=logger)
+        # if test_accuracy > best_accuracy:
+        #     best_accuracy = test_accuracy
+        #     print_log(f"Saving best...", logger=logger)
+        #     builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-best', args, logger = logger)
         
         builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, 'ckpt-last', args, logger = logger)
         if epoch % 25 ==0 and epoch >=250:
             builder.save_checkpoint(base_model, optimizer, epoch, metrics, best_metrics, f'ckpt-epoch-{epoch:03d}', args,
                                     logger=logger)
+        
     
     if train_writer is not None:
         train_writer.close()
